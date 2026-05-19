@@ -60,6 +60,11 @@ public class Money {
     private BigDecimal hkdPrice;
 
     /**
+     * hkd price
+     */
+    private BigDecimal hkdPrice;
+
+    /**
      * money
      *
      * @param currencyCode currency code
