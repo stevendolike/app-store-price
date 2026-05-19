@@ -1,0 +1,82 @@
+name: Sync upstream, apply HKD patch & build
+
+on:
+  schedule:
+    # 每天 UTC 02:00 自動執行（香港時間 10:00）
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # 可手動觸發
+
+jobs:
+  sync-patch-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      # 1. Checkout 你自己的 fork
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. 設定 git 用戶
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # 3. Sync 上游最新代碼（merge 到 main）
+      - name: Sync upstream
+        run: |
+          git remote add upstream https://github.com/hypooo/app-store-price.git || true
+          git fetch upstream
+          git checkout main
+          # 嘗試 merge，如有衝突會失敗並通知
+          git merge upstream/main --no-edit || {
+            echo "::error::Upstream merge conflict! Please resolve manually."
+            git merge --abort
+            exit 1
+          }
+
+      # 4. 還原自己的 README（防止被上游覆蓋）
+      - name: Restore custom README
+        run: cp docs/MY_README.md README.md
+
+      # 5. 應用 HKD patch（Python 腳本，容錯性強）
+      - name: Apply HKD patch
+        run: python3 patches/apply_hkd_patch.py
+
+      # 6. Commit 改動（如有）
+      - name: Commit patched changes
+        run: |
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: apply HKD base currency patch"
+            git push origin main
+          fi
+
+      # 7. 登入 GitHub Container Registry
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 8. Build & Push Docker image
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/app-store-price:latest
+            ghcr.io/${{ github.repository_owner }}/app-store-price:${{ github.sha }}
+
+      - name: Done
+        run: echo "Image pushed to ghcr.io/${{ github.repository_owner }}/app-store-price:latest"
