@@ -60,4 +60,12 @@ public class ExchangeRateUtil {
         return NumberUtil.div(amount, exchangeRateMap.get(currencyCode), 2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * convert to hkd
+     */
+    public BigDecimal convertToHkd(BigDecimal amount, String currencyCode) {
+        Map<String, BigDecimal> exchangeRateMap = getExchangeRateMap(AreaEnum.HONGKONG.getCurrencyCode());
+        return NumberUtil.div(amount, exchangeRateMap.get(currencyCode), 2, RoundingMode.HALF_UP);
+    }
+
 }

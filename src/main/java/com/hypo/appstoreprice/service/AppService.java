@@ -260,7 +260,7 @@ public class AppService {
             });
             // 有售价的应用，按价格升序，有内购的应用，按内购价格升序
             resultList.set(resultList.get().stream()
-                .sorted(Comparator.comparing(item -> item.getPrice().getCnyPrice()))
+                .sorted(Comparator.comparing(item -> item.getPrice().getHkdPrice()))
                 .sorted(Comparator.comparing(
                     item -> item.getInAppPurchaseList().stream()
                         .min(Comparator.comparing(ele -> ele.getPrice().getCnyPrice()))
@@ -322,7 +322,7 @@ public class AppService {
             }
             // 先按价格升序排序
             List<InAppPurchaseDTO> sortedPurchaseList = appInfo.getInAppPurchaseList().stream()
-                .sorted(Comparator.comparing(item -> item.getPrice().getCnyPrice()))
+                .sorted(Comparator.comparing(item -> item.getPrice().getHkdPrice()))
                 .toList();
             // 记录当前地区每个内购项目名称出现的次数
             Map<String, Integer> objectCountMap = new HashMap<>();
@@ -343,7 +343,7 @@ public class AppService {
                 GetAppInfoComparisonResDTO resDTO = new GetAppInfoComparisonResDTO();
                 resDTO.setObject(entry.getKey());
                 resDTO.setPriceList(entry.getValue().stream()
-                    .sorted(Comparator.comparing(Money::getCnyPrice))
+                    .sorted(Comparator.comparing(Money::getHkdPrice))
                     .collect(Collectors.toList()));
                 return resDTO;
             })

@@ -1,158 +1,70 @@
-# App Store Price Tracker
+# App Store Price（港幣版）
 
-一个用于查询和比较不同地区 App Store 应用价格的 Spring Boot 应用。
+> 本 repo 係 [hypooo/app-store-price](https://github.com/hypooo/app-store-price) 嘅 fork，加入咗以**港幣（HKD）為基準匯率**嘅修改，適合香港用戶使用。
 
-## 项目简介
+## 與上游的差異
 
-App Store Price Tracker 是一个强大的工具，可以查询不同国家/地区 App Store 中应用的价格信息。支持多国货币查询，并提供价格比较功能。
+| 項目 | 上游原版 | 本 fork |
+|---|---|---|
+| 全球比價基準貨幣 | 人民幣 ¥ | 港幣 HK$ |
+| 排序依據 | CNY 換算價 | HKD 換算價 |
+| 匯率來源 | ExchangeRate-API | ExchangeRate-API（相同） |
 
-## 功能特性
+修改涉及以下檔案：
+- `src/main/java/com/hypo/appstoreprice/common/ExchangeRateUtil.java` — 新增 `convertToHkd()` 方法
+- `src/main/java/com/hypo/appstoreprice/pojo/bean/Money.java` — 新增 `hkdPrice` 欄位
+- `src/main/java/com/hypo/appstoreprice/service/AppService.java` — 排序改用 `hkdPrice`
+- `src/main/resources/static/index.html` — 介面顯示改為 HK$
 
-- 查询指定应用在不同国家/地区的名称、开发者、价格信息
-- 支持多个国家/地区的价格查询（美国、中国、台湾、香港、日本、韩国、土耳其、尼日利亚、印度、巴基斯坦、巴西等）
-- 内购项目价格查询
-- 应用评分和描述信息
-- 响应式设计，支持多终端访问
-- 数据缓存机制，提高查询效率
-- 支持 Docker 部署
+## 匯率來源
 
-## 技术栈
+匯率數據來自 **[ExchangeRate-API](https://www.exchangerate-api.com/)** 免費公開接口：
 
-### 核心技术
-- **编程语言**: Java 21
-- **框架**: SpringBoot 4
-- **构建工具**: Maven
+```
+https://open.er-api.com/v6/latest/{貨幣代碼}
+```
 
-### 主要依赖
-- **Web 框架**: spring-boot-starter-web
-- **参数校验**: spring-boot-starter-validation
-- **代码简化**: Lombok
-- **工具库**:
-  - Hutool - 综合性工具库
-  - Guava - Google 核心工具库
-- **JSON 处理**: Fastjson2
-- **HTML 解析**:
-  - JsoupXpath - 基于 Jsoup 的 XPath 解析
-  - Jsoup - HTML 文档解析
+- 每日更新一次
+- 項目內建 Hutool 快取，避免重複請求
+- 港幣與美元掛鈎（聯繫匯率制度），匯率極為穩定（約 7.78）
+- **注意：匯率換算僅供參考，實際購買價格以 App Store 顯示為準**
 
-### 前端
-- HTML5, CSS3, JavaScript
-- 响应式设计，支持多终端访问
+## 自動同步機制
 
-### 容器化
-- Docker
-- Docker Compose
+本 repo 透過 **GitHub Actions** 每天自動：
 
-## 安装与部署
+1. 同步上游 `hypooo/app-store-price` 最新代碼
+2. 應用 HKD patch（`patches/apply_hkd_patch.py`）
+3. Build Docker image 並 push 至 GitHub Container Registry (ghcr.io)
 
-### Docker 部署（推荐）
+排程時間：每天香港時間上午 10:00（UTC 02:00）
+
+如需手動觸發：**Actions → Sync upstream, apply HKD patch & build → Run workflow**
+
+## Docker 部署
 
 ```bash
-docker run -d -p 8080:8080 ghcr.io/hypooo/app-store-price:latest
+docker run -d \
+  --name app-store-price \
+  -p 8080:8080 \
+  --restart unless-stopped \
+  ghcr.io/你的GitHub用戶名/app-store-price:latest
 ```
 
-或使用 Docker Compose：
+訪問 `http://localhost:8080`
+
+## 更新 image
 
 ```bash
-docker compose up -d
+docker pull ghcr.io/你的GitHub用戶名/app-store-price:latest
+docker stop app-store-price && docker rm app-store-price
+docker run -d \
+  --name app-store-price \
+  -p 8080:8080 \
+  --restart unless-stopped \
+  ghcr.io/你的GitHub用戶名/app-store-price:latest
 ```
 
-访问 `http://localhost:8080`
+---
 
-### 本地运行
-
-1. 克隆项目
-```bash
-git clone https://github.com/hypooo/app-store-price.git
-cd app-store-price
-```
-
-2. 使用 Maven 构建项目
-```bash
-mvn clean package
-```
-
-3. 运行应用
-```bash
-java -jar target/app-store-price-x.x.x.jar
-```
-
-4. 访问应用
-打开浏览器访问 `http://localhost:8080`
-
-## API 接口
-
-### 获取支持的地区列表
-- **接口**: `POST /app/getAreaList`
-- **请求体**: 无
-- **响应**: 支持的国家/地区列表
-
-### 搜索应用列表
-- **接口**: `POST /app/getAppList`
-- **请求体**:
-```json
-{
-  "appName": "应用名称",
-  "areaCode": "地区代码"
-}
-```
-- **响应**: 应用列表信息
-
-### 获取应用详细信息
-- **接口**: `POST /app/getAppInfo`
-- **请求体**:
-```json
-{
-  "appId": "应用ID"
-}
-```
-- **响应**: 应用详细信息（包括各地区价格）
-
-## 项目结构
-
-```
-app-store-price/
-├── src/
-│   ├── main/
-│   │   ├── java/com/hypo/appstoreprice/
-│   │   │   ├── controller/      # 控制器层
-│   │   │   ├── service/         # 服务层
-│   │   │   ├── pojo/            # 数据传输对象
-│   │   │   │   ├── bean/        # 基础数据对象
-│   │   │   │   ├── enums/       # 枚举类
-│   │   │   │   ├── request/     # 请求对象
-│   │   │   │   └── response/    # 响应对象
-│   │   │   ├── common/          # 通用工具类
-│   │   │   ├── handler/         # 异常和结果处理器
-│   │   │   └── AppStorePriceApplication.java  # 应用启动类
-│   │   └── resources/
-│   │       ├── application.yml # 应用配置文件
-│   │       └── static/          # 静态资源
-├── Dockerfile                   # Docker 构建文件
-├── docker-compose.yml           # Docker Compose 配置
-├── pom.xml                      # Maven 依赖配置
-└── README.md                    # 项目说明文档
-```
-
-## 缓存机制
-
-应用使用 Hutool 缓存库实现数据缓存，有效减少对 App Store API 的重复请求：
-- 应用列表缓存：1天
-- 应用详情缓存：1天
-- 使用细粒度锁机制，避免缓存穿透和并发问题
-
-## 注意事项
-
-1. 本应用依赖于 App Store 的公开 API 和网页解析，如果 Apple 修改其 API 或页面结构，可能需要相应更新解析逻辑。
-2. 请遵守 Apple 的服务条款，合理使用查询功能，避免过于频繁的请求。
-3. 汇率数据使用实时转换，实际价格可能与 App Store 显示略有差异。
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=hypooo%2Fapp-store-price&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=hypooo/app-store-price&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=hypooo/app-store-price&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=hypooo/app-store-price&type=date&legend=top-left" />
- </picture>
-</a>
+原項目功能、安裝說明及技術棧請參閱 [上游 README](https://github.com/hypooo/app-store-price#readme)。
