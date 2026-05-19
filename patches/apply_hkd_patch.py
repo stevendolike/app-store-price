@@ -2,7 +2,7 @@
 """
 apply_hkd_patch.py
 將 app-store-price 項目嘅基準貨幣由 CNY 改為 HKD。
-用字串替換而非 diff patch，對上游代碼更新有更好容錯性。
+用字串/regex 替換，對上游代碼更新有更好容錯性。
 """
 import re
 import sys
@@ -12,7 +12,7 @@ ROOT = Path(__file__).parent.parent
 ERRORS = []
 
 
-def patch_file(path: Path, replacements: list[tuple[str, str]], label: str):
+def patch_file(path: Path, replacements: list, label: str):
     """對檔案做多個字串替換，回報結果。"""
     if not path.exists():
         ERRORS.append(f"[SKIP] {label}: 檔案不存在 {path}")
@@ -25,7 +25,6 @@ def patch_file(path: Path, replacements: list[tuple[str, str]], label: str):
             changed = True
             print(f"[OK]   {label}: 替換成功")
         else:
-            # 可能已經 patch 過，檢查 new 是否已存在
             if new in text:
                 print(f"[SKIP] {label}: 已經 patch 過，跳過")
             else:
@@ -34,38 +33,72 @@ def patch_file(path: Path, replacements: list[tuple[str, str]], label: str):
         path.write_text(text, encoding="utf-8")
 
 
+def patch_eu(path: Path):
+    """
+    用 regex 插入 convertToHkd()，唔理縮排/換行差異。
+    搵 convertToCny 方法，喺其後插入新方法。
+    """
+    label = "ExchangeRateUtil.java: add convertToHkd()"
+    if not path.exists():
+        ERRORS.append(f"[SKIP] {label}: 檔案不存在 {path}")
+        return
+
+    text = path.read_text(encoding="utf-8")
+
+    # 已經 patch 過就跳過
+    if "convertToHkd" in text:
+        print(f"[SKIP] {label}: 已經 patch 過，跳過")
+        return
+
+    # debug：印出 convertToCny 附近內容方便排查
+    idx = text.find("convertToCny")
+    if idx == -1:
+        ERRORS.append(f"[WARN] {label}: 找不到 convertToCny，請人手確認")
+        return
+    print(f"[DEBUG] convertToCny 附近內容: {repr(text[max(0,idx-30):idx+150])}")
+
+    # regex：匹配 convertToCny 整個方法（容許任意空白/縮排）
+    pattern = re.compile(
+        r'([ \t]*(?:public\s+)?static\s+BigDecimal\s+convertToCny\s*\([^)]*\)\s*\{[^}]*\})',
+        re.DOTALL
+    )
+    match = pattern.search(text)
+    if not match:
+        ERRORS.append(f"[WARN] {label}: regex 匹配失敗，請人手確認")
+        return
+
+    original_method = match.group(1)
+    # 用原方法嘅縮排推斷新方法縮排
+    indent = re.match(r'^([ \t]*)', original_method).group(1)
+
+    new_method = (
+        f"\n\n{indent}/**\n"
+        f"{indent} * convert to hkd\n"
+        f"{indent} */\n"
+        f"{indent}public static BigDecimal convertToHkd(BigDecimal price, String currencyCode) {{\n"
+        f"{indent}    if (price == null || price.compareTo(java.math.BigDecimal.ZERO) == 0) {{\n"
+        f"{indent}        return java.math.BigDecimal.ZERO;\n"
+        f"{indent}    }}\n"
+        f"{indent}    return convertTo(price, currencyCode, \"HKD\");\n"
+        f"{indent}}}"
+    )
+
+    new_text = text.replace(original_method, original_method + new_method, 1)
+    path.write_text(new_text, encoding="utf-8")
+    print(f"[OK]   {label}: 替換成功")
+
+
 # ── 1. ExchangeRateUtil.java ──────────────────────────────────────────────────
 eu_path = ROOT / "src/main/java/com/hypo/appstoreprice/common/ExchangeRateUtil.java"
-
-# 喺 convertToCny 方法之後插入 convertToHkd
-# 原文：public static BigDecimal convertToCny(...)  { return convertTo(..., "CNY"); }
-# 我哋搵 convertToCny 整個方法塊，在其後插入新方法
-EU_OLD = '    public static BigDecimal convertToCny(BigDecimal price, String currencyCode) {\n        return convertTo(price, currencyCode, "CNY");\n    }'
-EU_NEW = '''    public static BigDecimal convertToCny(BigDecimal price, String currencyCode) {
-        return convertTo(price, currencyCode, "CNY");
-    }
-
-    /**
-     * convert to hkd
-     */
-    public static BigDecimal convertToHkd(BigDecimal price, String currencyCode) {
-        if (price == null || price.compareTo(java.math.BigDecimal.ZERO) == 0) {
-            return java.math.BigDecimal.ZERO;
-        }
-        return convertTo(price, currencyCode, "HKD");
-    }'''
-
-patch_file(eu_path, [(EU_OLD, EU_NEW)], "ExchangeRateUtil.java: add convertToHkd()")
+patch_eu(eu_path)
 
 
 # ── 2. Money.java ─────────────────────────────────────────────────────────────
 money_path = ROOT / "src/main/java/com/hypo/appstoreprice/pojo/bean/Money.java"
 
-# 加 hkdPrice 欄位（喺 cnyPrice 之後）
 MONEY_FIELD_OLD = '    private BigDecimal cnyPrice;\n'
 MONEY_FIELD_NEW = '    private BigDecimal cnyPrice;\n\n    /**\n     * hkd price\n     */\n    private BigDecimal hkdPrice;\n'
 
-# 喺 constructor 內加 hkdPrice 賦值（喺 cnyPrice 賦值之後）
 MONEY_CTOR_OLD = '        this.cnyPrice = ExchangeRateUtil.convertToCny(price, currencyCode);\n    }'
 MONEY_CTOR_NEW = '        this.cnyPrice = ExchangeRateUtil.convertToCny(price, currencyCode);\n        this.hkdPrice = ExchangeRateUtil.convertToHkd(price, currencyCode);\n    }'
 
@@ -97,36 +130,15 @@ if html_path.exists():
     html = html_path.read_text(encoding="utf-8")
     original = html
 
-    # 全球比價 tab：大字顯示 hkdPrice，locale 改 zh-HK
-    html = html.replace(
-        "formatPrice(price.cnyPrice, 'zh-CN')",
-        "formatPrice(price.hkdPrice, 'zh-HK')"
-    )
-    # 大字前面的 ¥ 符號
-    html = html.replace(
-        "<span x-show=\"price.price > 0\" class=\"text-xs font-normal opacity-70 mr-0.5\"\n                                                :class=\"{'text-yellow-600 dark:text-yellow-500': index === 0}\">¥</span>",
-        "<span x-show=\"price.price > 0\" class=\"text-xs font-normal opacity-70 mr-0.5\"\n                                                :class=\"{'text-yellow-600 dark:text-yellow-500': index === 0}\">HK$</span>"
-    )
-    # title tooltip 裏面的 ¥
+    html = html.replace("formatPrice(price.cnyPrice, 'zh-CN')", "formatPrice(price.hkdPrice, 'zh-HK')")
     html = html.replace(
         ":title=\"price.price === 0 ? '免费' : ('¥ ' + formatPrice(price.cnyPrice, 'zh-CN'))\"",
         ":title=\"price.price === 0 ? '免费' : ('HK$ ' + formatPrice(price.hkdPrice, 'zh-HK'))\""
     )
-
-    # 分地區詳情 tab：≈ ¥ 和 cnyPrice
-    html = html.replace(
-        "formatPrice(app.price.cnyPrice, 'zh-CN')",
-        "formatPrice(app.price.hkdPrice, 'zh-HK')"
-    )
-    html = html.replace(
-        "formatPrice(purchase.price.cnyPrice, 'zh-CN')",
-        "formatPrice(purchase.price.hkdPrice, 'zh-HK')"
-    )
+    html = html.replace(">¥</span>", ">HK$</span>")
+    html = html.replace("formatPrice(app.price.cnyPrice, 'zh-CN')", "formatPrice(app.price.hkdPrice, 'zh-HK')")
+    html = html.replace("formatPrice(purchase.price.cnyPrice, 'zh-CN')", "formatPrice(purchase.price.hkdPrice, 'zh-HK')")
     html = html.replace("≈ ¥<span", "≈ HK$<span")
-    html = html.replace(
-        "<span\n                                                        class=\"text-xs font-normal text-slate-400 opacity-70 mr-0.5\">¥</span>",
-        "<span\n                                                        class=\"text-xs font-normal text-slate-400 opacity-70 mr-0.5\">HK$</span>"
-    )
 
     if html != original:
         html_path.write_text(html, encoding="utf-8")
