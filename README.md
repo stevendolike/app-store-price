@@ -48,7 +48,7 @@ docker run -d \
   --name app-store-price \
   -p 8080:8080 \
   --restart unless-stopped \
-  ghcr.io/你的GitHub用戶名/app-store-price:latest
+  ghcr.io/stevendolike/app-store-price:latest
 ```
 
 訪問 `http://localhost:8080`
@@ -56,13 +56,13 @@ docker run -d \
 ## 更新 image
 
 ```bash
-docker pull ghcr.io/你的GitHub用戶名/app-store-price:latest
+docker pull ghcr.io/stevendolike/app-store-price:latest
 docker stop app-store-price && docker rm app-store-price
 docker run -d \
   --name app-store-price \
   -p 8080:8080 \
   --restart unless-stopped \
-  ghcr.io/你的GitHub用戶名/app-store-price:latest
+  ghcr.io/stevendolike/app-store-price:latest
 ```
 
 ---
