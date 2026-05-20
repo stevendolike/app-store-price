@@ -2,6 +2,7 @@
 """
 apply_hkd_patch.py
 將 app-store-price 項目嘅基準貨幣由 CNY 改為 HKD。
+所有 patch 均為 idempotent（可重複執行）。
 """
 import sys
 from pathlib import Path
@@ -10,63 +11,33 @@ ROOT = Path(__file__).parent.parent
 ERRORS = []
 
 
-def patch_file(path: Path, replacements: list, label: str):
-    if not path.exists():
-        ERRORS.append(f"[SKIP] {label}: 檔案不存在 {path}")
-        return
-    text = path.read_text(encoding="utf-8")
-    changed = False
-    for old, new in replacements:
-        if old in text:
-            text = text.replace(old, new)
-            changed = True
-            print(f"[OK]   {label}: 替換成功")
-        else:
-            if new in text:
-                print(f"[SKIP] {label}: 已經 patch 過，跳過")
-            else:
-                ERRORS.append(f"[WARN] {label}: 找不到目標字串\n       目標: {repr(old[:80])}")
-    if changed:
-        path.write_text(text, encoding="utf-8")
-
-
+# ── 1. ExchangeRateUtil.java ──────────────────────────────────────────────────
 def patch_eu(path: Path):
-    """
-    複製 convertToCny 方法 → convertToHkd，
-    將 AreaEnum.CHINA 替換為 AreaEnum.HONGKONG。
-    唔需要知道方法內部實現，對上游改動容錯性最強。
-    """
     label = "ExchangeRateUtil.java: add convertToHkd()"
     if not path.exists():
-        ERRORS.append(f"[SKIP] {label}: 檔案不存在 {path}")
+        ERRORS.append(f"[SKIP] {label}: 檔案不存在")
         return
 
     text = path.read_text(encoding="utf-8")
 
     if "convertToHkd" in text:
-        print(f"[SKIP] {label}: 已經 patch 過，跳過")
+        print(f"[SKIP] {label}: 已存在，跳過")
         return
 
-    # 搵 convertToCny 方法簽名起點
     sig = "convertToCny"
     sig_pos = text.find(sig)
     if sig_pos == -1:
         ERRORS.append(f"[WARN] {label}: 找不到 convertToCny")
         return
 
-    # 向前搵方法真正開始（可能有 public/javadoc）
-    # 搵最近一個換行符之後的位置
-    method_start = text.rfind("\n", 0, sig_pos) + 1
+    print(f"[DEBUG] convertToCny 附近: {repr(text[max(0,sig_pos-30):sig_pos+100])}")
 
-    # 搵方法開頭的 {
     brace_open = text.find("{", sig_pos)
     if brace_open == -1:
         ERRORS.append(f"[WARN] {label}: 找不到方法 {{")
         return
 
-    # brace counting 搵配對的 }
-    depth = 0
-    brace_close = -1
+    depth, brace_close = 0, -1
     for i in range(brace_open, len(text)):
         if text[i] == "{":
             depth += 1
@@ -80,44 +51,94 @@ def patch_eu(path: Path):
         ERRORS.append(f"[WARN] {label}: 找不到方法結束 }}")
         return
 
-    # 提取完整方法
+    method_start = text.rfind("\n", 0, sig_pos) + 1
     cny_method = text[method_start:brace_close + 1]
     print(f"[DEBUG] 複製方法: {repr(cny_method[:80])}")
 
-    # 複製並替換
     hkd_method = (
         cny_method
         .replace("convertToCny", "convertToHkd")
         .replace("AreaEnum.CHINA", "AreaEnum.HONGKONG")
     )
 
-    # 插入喺原方法之後
     insert_pos = brace_close + 1
-    new_text = text[:insert_pos] + "\n\n    /**\n     * convert to hkd\n     */\n    " + hkd_method.lstrip() + text[insert_pos:]
+    new_text = (
+        text[:insert_pos]
+        + "\n\n    /**\n     * convert to hkd\n     */\n    "
+        + hkd_method.lstrip()
+        + text[insert_pos:]
+    )
     path.write_text(new_text, encoding="utf-8")
     print(f"[OK]   {label}: 替換成功")
 
 
-# ── 1. ExchangeRateUtil.java ──────────────────────────────────────────────────
 patch_eu(ROOT / "src/main/java/com/hypo/appstoreprice/common/ExchangeRateUtil.java")
 
 
 # ── 2. Money.java ─────────────────────────────────────────────────────────────
-money_path = ROOT / "src/main/java/com/hypo/appstoreprice/pojo/bean/Money.java"
-patch_file(money_path, [
-    (
-        '    private BigDecimal cnyPrice;\n',
-        '    private BigDecimal cnyPrice;\n\n    /**\n     * hkd price\n     */\n    private BigDecimal hkdPrice;\n',
-    ),
-    (
-        '        this.cnyPrice = ExchangeRateUtil.convertToCny(price, currencyCode);\n    }',
-        '        this.cnyPrice = ExchangeRateUtil.convertToCny(price, currencyCode);\n        this.hkdPrice = ExchangeRateUtil.convertToHkd(price, currencyCode);\n    }',
-    ),
-], "Money.java")
+def patch_money(path: Path):
+    label = "Money.java"
+    if not path.exists():
+        ERRORS.append(f"[SKIP] {label}: 檔案不存在")
+        return
+
+    text = path.read_text(encoding="utf-8")
+    changed = False
+
+    # 加 hkdPrice 欄位（只在未存在時）
+    if "hkdPrice" not in text:
+        old = '    private BigDecimal cnyPrice;\n'
+        new = '    private BigDecimal cnyPrice;\n\n    /**\n     * hkd price\n     */\n    private BigDecimal hkdPrice;\n'
+        if old in text:
+            text = text.replace(old, new, 1)
+            changed = True
+            print(f"[OK]   {label}: hkdPrice 欄位已加入")
+        else:
+            ERRORS.append(f"[WARN] {label}: 找不到 cnyPrice 欄位")
+    else:
+        print(f"[SKIP] {label}: hkdPrice 欄位已存在")
+
+    # 加 convertToHkd 呼叫（只在未存在時）
+    if "convertToHkd" not in text:
+        old = '        this.cnyPrice = ExchangeRateUtil.convertToCny(price, currencyCode);\n    }'
+        new = '        this.cnyPrice = ExchangeRateUtil.convertToCny(price, currencyCode);\n        this.hkdPrice = ExchangeRateUtil.convertToHkd(price, currencyCode);\n    }'
+        if old in text:
+            text = text.replace(old, new, 1)
+            changed = True
+            print(f"[OK]   {label}: convertToHkd 呼叫已加入")
+        else:
+            ERRORS.append(f"[WARN] {label}: 找不到 constructor 目標字串")
+    else:
+        print(f"[SKIP] {label}: convertToHkd 呼叫已存在")
+
+    if changed:
+        path.write_text(text, encoding="utf-8")
+
+
+patch_money(ROOT / "src/main/java/com/hypo/appstoreprice/pojo/bean/Money.java")
 
 
 # ── 3. AppService.java ────────────────────────────────────────────────────────
-patch_file(
+def patch_simple(path: Path, replacements: list, label: str):
+    if not path.exists():
+        ERRORS.append(f"[SKIP] {label}: 檔案不存在")
+        return
+    text = path.read_text(encoding="utf-8")
+    changed = False
+    for old, new in replacements:
+        if old in text:
+            text = text.replace(old, new)
+            changed = True
+            print(f"[OK]   {label}: 替換成功")
+        elif new in text:
+            print(f"[SKIP] {label}: 已存在，跳過")
+        else:
+            ERRORS.append(f"[WARN] {label}: 找不到目標字串\n       目標: {repr(old[:80])}")
+    if changed:
+        path.write_text(text, encoding="utf-8")
+
+
+patch_simple(
     ROOT / "src/main/java/com/hypo/appstoreprice/service/AppService.java",
     [
         (
